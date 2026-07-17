@@ -46,12 +46,22 @@ CUSTOM_CSS = """
     background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%) !important;
     border: none !important; color: #1a1a2e !important; font-weight: 600 !important;
 }
+.copy-btn {
+    background: linear-gradient(135deg, #f6d365 0%, #fda085 100%) !important;
+    border: none !important; color: #7a3e00 !important; font-weight: 600 !important;
+}
 """
+
+# 复制到剪贴板的 JS
+COPY_JS = "(t) => { if (t) { navigator.clipboard.writeText(t); } }"
+
 
 def fetch_models_from_env():
     models = config.AVAILABLE_MODELS
-    if not models: return gr.update(choices=[], value=None), "⚠️ HF 环境变量 AVAILABLE_MODELS 未配置或为空"
+    if not models:
+        return gr.update(choices=[], value=None), "⚠️ HF 环境变量 AVAILABLE_MODELS 未配置或为空"
     return gr.update(choices=models, value=models[0]), f"✅ 已读取到 {len(models)} 个可用模型"
+
 
 def _prepare_params(api_key, base_url, model_dropdown, model_text, portrait_suffix,
                     dim_appearance, dim_body, dim_clothing, dim_pose,
@@ -74,22 +84,37 @@ def _prepare_params(api_key, base_url, model_dropdown, model_text, portrait_suff
 
     return safe_api_key, safe_base_url, safe_model, safe_portrait_suffix, enabled_dims
 
+
 def analyze_images(files, provider, api_key, base_url, model_dropdown, model_text,
-                   images_per_request, nsfw_mode, nsfw_max_rolls, portrait_mode, portrait_suffix, custom_prompt,
-                   dim_appearance, dim_body, dim_clothing, dim_pose, dim_nsfw_detail, dim_composition, dim_background, dim_style):
-    if not files: return None, "❌ 请上传至少一张图片或一个 ZIP 压缩包", []
+                   images_per_request, max_concurrent, skip_completed,
+                   nsfw_mode, nsfw_max_rolls, portrait_mode, portrait_suffix, custom_prompt,
+                   dim_appearance, dim_body, dim_clothing, dim_pose,
+                   dim_nsfw_detail, dim_composition, dim_background, dim_style,
+                   progress=gr.Progress()):
+    if not files:
+        return None, "❌ 请上传至少一张图片或一个 ZIP 压缩包", []
     input_paths = [f if isinstance(f, str) else f.name for f in files]
     safe_api_key, safe_base_url, safe_model, safe_portrait_suffix, enabled_dims = _prepare_params(
         api_key, base_url, model_dropdown, model_text, portrait_suffix,
         dim_appearance, dim_body, dim_clothing, dim_pose, dim_nsfw_detail, dim_composition, dim_background, dim_style
     )
 
+    progress(0.0, desc="准备中...")
+
+    def cb(frac, desc):
+        try:
+            progress(frac, desc=desc)
+        except Exception:
+            pass
+
     try:
         zip_paths, summary, gallery_data = process_batch_sync(
             input_paths=input_paths, provider=provider, api_key=safe_api_key, base_url=safe_base_url, model=safe_model,
             custom_prompt=(custom_prompt or "").strip() or None, images_per_request=int(images_per_request),
             nsfw=nsfw_mode, nsfw_max_rolls=int(nsfw_max_rolls), enabled_dims=enabled_dims,
-            portrait=portrait_mode, portrait_suffix=safe_portrait_suffix
+            portrait=portrait_mode, portrait_suffix=safe_portrait_suffix,
+            max_concurrent=int(max_concurrent), skip_completed=skip_completed,
+            progress_callback=cb
         )
         return zip_paths, summary, gallery_data
     except Exception as e:
@@ -104,22 +129,21 @@ def expand_text_tags(tags, provider, api_key, base_url, model_dropdown, model_te
         api_key, base_url, model_dropdown, model_text, portrait_suffix,
         dim_appearance, dim_body, dim_clothing, dim_pose, dim_nsfw_detail, dim_composition, dim_background, dim_style
     )
-    
     try:
-        result = expand_tags_sync(
+        return expand_tags_sync(
             tags=tags, provider=provider, api_key=safe_api_key, base_url=safe_base_url, model=safe_model,
             nsfw=nsfw_mode, nsfw_max_rolls=int(nsfw_max_rolls), enabled_dims=enabled_dims,
             portrait=portrait_mode, portrait_suffix=safe_portrait_suffix
         )
-        return result
     except Exception as e:
         logger.error(f"扩写失败: {e}")
         return f"❌ 扩写失败: {str(e)}"
 
 
 def on_nsfw_toggle(nsfw_on):
-    if nsfw_on: return gr.update(value=True), gr.update(visible=True)
-    else: return gr.update(value=False), gr.update(visible=False)
+    if nsfw_on:
+        return gr.update(value=True), gr.update(visible=True)
+    return gr.update(value=False), gr.update(visible=False)
 
 
 def create_gradio_app():
@@ -129,19 +153,15 @@ def create_gradio_app():
         gr.HTML("""
         <div class="title-block">
             <h1>🖼️ Image / Tag → Prompt 智能提示词引擎</h1>
-            <p>动态提取变量接口 · 标签扩写 · NSFW 防截断 Roll 系统 · 肖像数据集标注</p>
+            <p>并发处理 · 断点续跑 · 单图降级 · 标签扩写 · NSFW 防截断 Roll</p>
         </div>
         """)
 
-        # 动态合并预设的 5 个基础商和从变量里拉取出来的自定义供应商
-        PROVIDER_CHOICES = ["openai", "gemini", "claude", "qwen", "custom"] + list(config.EXTRA_PROVIDERS.keys())
-
         with gr.Row(equal_height=False):
-            # ===== 左栏：全局设置 =====
             with gr.Column(scale=1, min_width=320):
 
                 with gr.Accordion("⚙️ API 设置", open=False):
-                    provider = gr.Dropdown(choices=PROVIDER_CHOICES, value="openai", label="AI 提供商", info="如选中额外添加的供应商，下方配置可全留空")
+                    provider = gr.Dropdown(choices=["openai", "gemini", "claude", "qwen", "custom"], value="openai", label="AI 提供商")
                     api_key = gr.Textbox(label="API Key", type="password", placeholder="留空→使用环境变量")
                     base_url = gr.Textbox(label="API Base URL", placeholder="留空→使用环境变量")
 
@@ -160,7 +180,6 @@ def create_gradio_app():
                 with gr.Group(elem_classes="nsfw-toggle"):
                     gr.Markdown("### 🔓 NSFW 破限与维度控制")
                     nsfw_mode = gr.Checkbox(label="🔞 启用 NSFW 无限制模式", value=False, info="多层破限 + 防截断 Roll 重试")
-                    
                     nsfw_max_rolls = gr.Slider(minimum=0, maximum=10, value=3, step=1, label="🔄 触发截断自动重跑 (Roll) 次数", visible=False)
 
                     with gr.Accordion("🎛️ 描述维度开关（点击展开）", open=False):
@@ -177,43 +196,40 @@ def create_gradio_app():
                                 dim_background = gr.Checkbox(label="🏞️ 背景环境", value=True)
                                 dim_style = gr.Checkbox(label="🎨 画风质量", value=True)
 
-            # ===== 右栏：双功能 Tab =====
             with gr.Column(scale=2):
                 with gr.Tabs():
-                    # --- Tab 1: 图像反推 ---
                     with gr.TabItem("🖼️ 图像反推"):
-                        
-                        images_per_request = gr.Slider(minimum=1, maximum=15, value=5, step=1, label="单次请求合并图片数", info="建议维持在 3~5 以防漏图。")
-                        
-                        with gr.Accordion("📝 完全自定义模板 (点击展开填写)", open=False):
-                            custom_prompt = gr.Textbox(label="", lines=3, placeholder="填写后将完全覆盖上方所有模式和开关（仅在图像反推生效）")
-                            gr.HTML("<div class='warning-text'>⚠️ 警告：填写此项将完全无视上方的模式和开关！</div>")
-                        
+                        with gr.Row():
+                            images_per_request = gr.Slider(minimum=1, maximum=15, value=5, step=1, label="单次合并图片数", info="建议 3~5")
+                            max_concurrent = gr.Slider(minimum=1, maximum=8, value=3, step=1, label="并发请求数", info="越大越快，注意限流")
+                        skip_completed = gr.Checkbox(label="⏩ 跳过已完成（断点续跑，相同图+相同设置直接复用缓存）", value=True)
+
+                        custom_prompt = gr.Textbox(label="📝 完全自定义模板 (可选)", lines=2, placeholder="填写后将完全覆盖上方所有模式和开关（仅图像反推生效）")
+
                         file_input = gr.Files(label="上传图片或 .zip 压缩包", file_types=["image", ".zip"], file_count="multiple", elem_classes="upload-area")
-                        
                         submit_btn = gr.Button("🚀 开始极速反推", variant="primary", size="lg", elem_classes="primary-btn")
-                        
-                        output_file = gr.File(label="📦 下载区域 (生成原图+TXT包 及 纯TXT轻量包)", file_count="multiple")
-                        
+
+                        output_file = gr.File(label="📦 下载区域 (原图+TXT 包 及 纯 TXT 轻量包)", file_count="multiple")
+
                         with gr.Accordion("🖼️ 图文对照画廊预览 (点击展开)", open=False):
                             output_gallery = gr.Gallery(label="处理结果预览", columns=4, rows=2, height="auto", object_fit="contain", preview=True)
-                        
+
+                        with gr.Row():
+                            gr.Markdown("### 📊 纯文本对照摘要")
+                            copy_summary_btn = gr.Button("📋 复制全部", scale=0, elem_classes="copy-btn")
                         output_summary = gr.Textbox(label="所有图片描述合并结果", lines=15, interactive=False, elem_classes="summary-box")
 
-                    # --- Tab 2: 标签扩写 ---
                     with gr.TabItem("✍️ 标签元素扩写"):
-                        gr.HTML("""<div class="tip-text">💡 <b>扩写说明：</b>输入简单的元素标签，AI将根据左侧的<b>【维度开关】</b>和<b>【NSFW/肖像模式】</b>为你扩写成细节饱满的中文自然语言长段落。</div>""")
-                        
-                        tags_input = gr.Textbox(
-                            label="输入基础标签或元素", lines=4, 
-                            placeholder="例如：1girl, 森林, 魔法师, 夜晚...\n\n(AI 会自动补全环境、光影、服装、姿势等细节)"
-                        )
-                        
+                        gr.HTML("""<div class="tip-text">💡 <b>扩写说明：</b>输入简单元素标签，AI 根据左侧<b>【维度开关】</b>和<b>【NSFW/肖像模式】</b>扩写成细节饱满的中文长段落。</div>""")
+                        tags_input = gr.Textbox(label="输入基础标签或元素", lines=4, placeholder="例如：1girl, 森林, 魔法师, 夜晚...")
                         expand_btn = gr.Button("✨ 开始扩写提示词", variant="primary", size="lg", elem_classes="primary-btn")
-                        
-                        expand_output = gr.Textbox(label="扩写结果", lines=12, interactive=False, elem_classes="summary-box")
 
-        # ===== 逻辑绑定 =====
+                        with gr.Row():
+                            gr.Markdown("### 扩写结果")
+                            copy_expand_btn = gr.Button("📋 复制结果", scale=0, elem_classes="copy-btn")
+                        expand_output = gr.Textbox(label="", lines=12, interactive=False, elem_classes="summary-box")
+
+        # ===== 事件绑定 =====
         nsfw_mode.change(fn=on_nsfw_toggle, inputs=[nsfw_mode], outputs=[dim_nsfw_detail, nsfw_max_rolls])
         fetch_btn.click(fn=fetch_models_from_env, inputs=[], outputs=[model_dropdown, fetch_status])
 
@@ -221,7 +237,8 @@ def create_gradio_app():
             fn=analyze_images,
             inputs=[
                 file_input, provider, api_key, base_url, model_dropdown, model_text,
-                images_per_request, nsfw_mode, nsfw_max_rolls, portrait_mode, portrait_suffix, custom_prompt,
+                images_per_request, max_concurrent, skip_completed,
+                nsfw_mode, nsfw_max_rolls, portrait_mode, portrait_suffix, custom_prompt,
                 dim_appearance, dim_body, dim_clothing, dim_pose, dim_nsfw_detail, dim_composition, dim_background, dim_style
             ],
             outputs=[output_file, output_summary, output_gallery],
@@ -237,19 +254,21 @@ def create_gradio_app():
             outputs=[expand_output]
         )
 
+        # 一键复制（纯前端 JS，不走后端）
+        copy_summary_btn.click(fn=None, inputs=[output_summary], outputs=None, js=COPY_JS)
+        copy_expand_btn.click(fn=None, inputs=[expand_output], outputs=None, js=COPY_JS)
+
     return app
+
 
 if __name__ == "__main__":
     app = create_gradio_app()
-    
     auth_users = config.AUTH_USERS
     if auth_users:
         def auth_fn(username, password):
-            for u, p in auth_users:
-                if username == u and password == p:
-                    return True
-            return False
-        
-        app.launch(server_name="0.0.0.0", server_port=7860, share=False, auth=auth_fn, auth_message="🔒 请输入账号密码登录后使用")
+            return any(username == u and password == p for u, p in auth_users)
+        app.launch(server_name="0.0.0.0", server_port=7860, share=False,
+                   auth=auth_fn, auth_message="🔒 请输入账号密码登录后使用")
     else:
         app.launch(server_name="0.0.0.0", server_port=7860, share=False)
+
