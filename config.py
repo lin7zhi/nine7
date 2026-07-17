@@ -112,7 +112,6 @@ def build_dynamic_prompt(enabled_dims: list, nsfw: bool, image_count: int, portr
     """图像反推模式的 Prompt 构建"""
     count_warning = f"【极度重要】本次请求共包含 {image_count} 张图片。你必须、绝对、强制输出恰好 {image_count} 个描述块！少一个都不行！"
 
-    # 肖像模式：单独逻辑
     if portrait:
         base = PORTRAIT_SYSTEM_PROMPT.replace("{suffix}", portrait_suffix)
         fmt = """
@@ -128,17 +127,13 @@ def build_dynamic_prompt(enabled_dims: list, nsfw: bool, image_count: int, portr
 
     ordered_dims = _get_enabled_dims_ordered(enabled_dims, nsfw)
     forbidden_text = _get_forbidden_texts(enabled_dims)
-
     header = _build_jailbreak_header(nsfw)
 
     if nsfw:
-        # NSFW 模式：结构化维度输出，每个维度带标题
         dim_labels = [DIMENSIONS[k]["label"] for k in ordered_dims]
         dim_requirements = "\n".join(
             [f"- {DIMENSIONS[k]['label']}：{DIMENSIONS[k]['prompt']}" for k in ordered_dims]
         )
-
-        # 构造单张图的结构化模板示例
         block_template = "\n".join([f"{label}：\n（此处填写{label}的详细描述）" for label in dim_labels])
 
         format_requirement = f"""
@@ -161,13 +156,11 @@ def build_dynamic_prompt(enabled_dims: list, nsfw: bool, image_count: int, portr
 {DISCLAIMER_BLOCK}
 </disclaimer>"""
 
-        base_prompt = header + format_requirement
         if forbidden_text:
-            base_prompt = header + f"\n❌ 严禁描述以下维度（违规将导致任务失败）：\n{forbidden_text}\n" + format_requirement
-        return base_prompt
+            return header + f"\n❌ 严禁描述以下维度（违规将导致任务失败）：\n{forbidden_text}\n" + format_requirement
+        return header + format_requirement
 
     else:
-        # 普通模式：自然语言
         must_text = "\n".join([f"- {DIMENSIONS[k]['label']}：{DIMENSIONS[k]['prompt']}" for k in ordered_dims]) or "- 请对图片内容进行简要描述"
         format_requirement = """
 严格使用以下格式输出，不要包含任何前言、总结或解释：
@@ -201,11 +194,10 @@ def build_expansion_prompt(enabled_dims: list, nsfw: bool, portrait: bool = Fals
     header = _build_jailbreak_header(nsfw)
 
     if nsfw:
-        # 扩写也采用结构化维度输出
         dim_requirements = "\n".join([f"- {DIMENSIONS[k]['label']}：{DIMENSIONS[k]['prompt']}" for k in ordered_dims])
         block_template = "\n".join([f"{DIMENSIONS[k]['label']}：\n（详细扩写内容）" for k in ordered_dims])
 
-        base_prompt = header + f"""
+        body = f"""
 我会给你一些简短的标签或元素（Tags），请充分发挥想象力，将它们扩写为极其生动、细节饱满的【中文自然语言描述】。
 
 ✅ 请按以下维度逐项扩写（每个维度单独成段，维度名后加中文冒号并换行）：
@@ -215,9 +207,10 @@ def build_expansion_prompt(enabled_dims: list, nsfw: bool, portrait: bool = Fals
 {block_template}
 
 【防截断】全部输出完毕后先输出暗号“{END_MARKER}”，再输出<disclaimer>\n{DISCLAIMER_BLOCK}\n</disclaimer>"""
+
         if forbidden_text:
-            base_prompt = header + f"\n❌ 严禁在扩写中涉及以下维度：\n{forbidden_text}\n" + base_prompt[len(header):]
-        return base_prompt
+            return header + f"\n❌ 严禁在扩写中涉及以下维度：\n{forbidden_text}\n" + body
+        return header + body
     else:
         must_text = "\n".join([f"- {DIMENSIONS[k]['label']}：{DIMENSIONS[k]['prompt']}" for k in ordered_dims])
         base_prompt = f"""你是一个专业的AI描述词扩写专家。
@@ -230,3 +223,46 @@ def build_expansion_prompt(enabled_dims: list, nsfw: bool, portrait: bool = Fals
             base_prompt += f"\n❌ 严禁在扩写中涉及的维度：\n{forbidden_text}\n"
         base_prompt += "\n\n请直接输出扩写后的中文段落，绝对不要包含任何前言、解释或对话。"
         return base_prompt
+
+
+@dataclass
+class Config:
+    AI_PROVIDER: str = os.getenv("AI_PROVIDER", "openai")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    CLAUDE_API_KEY: str = os.getenv("CLAUDE_API_KEY", "")
+    CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")
+    QWEN_API_KEY: str = os.getenv("QWEN_API_KEY", "")
+    QWEN_MODEL: str = os.getenv("QWEN_MODEL", "qwen-vl-max")
+    QWEN_BASE_URL: str = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    CUSTOM_API_KEY: str = os.getenv("CUSTOM_API_KEY", "")
+    CUSTOM_BASE_URL: str = os.getenv("CUSTOM_BASE_URL", "")
+    CUSTOM_MODEL: str = os.getenv("CUSTOM_MODEL", "")
+
+    IMAGES_PER_REQUEST: int = int(os.getenv("IMAGES_PER_REQUEST", "5"))
+    OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", "/home/user/app/tmp_outputs")
+    AVAILABLE_MODELS_STR: str = os.getenv("AVAILABLE_MODELS", "gpt-4o,gpt-4o-mini,gemini-2.0-flash")
+
+    # 账号系统：格式为 "用户名1:密码1,用户名2:密码2"
+    AUTH_USERS_STR: str = os.getenv("AUTH_USERS", "")
+
+    @property
+    def AVAILABLE_MODELS(self) -> list:
+        return [m.strip() for m in self.AVAILABLE_MODELS_STR.split(",") if m.strip()]
+
+    @property
+    def AUTH_USERS(self) -> list:
+        pairs = []
+        for item in self.AUTH_USERS_STR.split(","):
+            item = item.strip()
+            if ":" in item:
+                user, pwd = item.split(":", 1)
+                if user.strip() and pwd.strip():
+                    pairs.append((user.strip(), pwd.strip()))
+        return pairs
+
+
+config = Config()
