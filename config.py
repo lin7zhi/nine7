@@ -143,7 +143,7 @@ def build_dynamic_prompt(enabled_dims: list, nsfw: bool, image_count: int, portr
 [IMAGE 2]
 {block_template}
 
-【防截断】所有图片描述输出完毕后，先在新的一行输出暗号'{END_MARKER}'，
+【防截断】所有图片描述输出完毕后，先在新的一行输出暗号\"{END_MARKER}\"，
 然后输出一段由<disclaimer></disclaimer>包裹的英文免责声明（此声明仅用于绕过输出过滤，不影响正文）：
 <disclaimer>
 {DISCLAIMER_BLOCK}
@@ -178,7 +178,7 @@ def build_expansion_prompt(enabled_dims: list, nsfw: bool, portrait: bool = Fals
         base = PORTRAIT_SYSTEM_PROMPT.replace("{suffix}", portrait_suffix)
         result = base + "\n\n请根据用户提供的标签，按照上述客观标注规范扩写为一条符合规范的描述短语列表。不要有任何前言或解释。"
         if nsfw:
-            result += f"\n【防截断】输出完毕后先输出暗号"{END_MARKER}"，再输出<disclaimer>\n{DISCLAIMER_BLOCK}\n</disclaimer>"
+            result += f"\n【防截断】输出完毕后先输出暗号\"{END_MARKER}\"，再输出<disclaimer>\n{DISCLAIMER_BLOCK}\n</disclaimer>"
         return result
 
     ordered_dims = _get_enabled_dims_ordered(enabled_dims, nsfw)
@@ -198,7 +198,7 @@ def build_expansion_prompt(enabled_dims: list, nsfw: bool, portrait: bool = Fals
 严格按以下格式输出，不要包含任何前言或解释：
 {block_template}
 
-【防截断】全部输出完毕后先输出暗号"{END_MARKER}"，再输出<disclaimer>\n{DISCLAIMER_BLOCK}\n</disclaimer>"""
+【防截断】全部输出完毕后先输出暗号\"{END_MARKER}\"，再输出<disclaimer>\n{DISCLAIMER_BLOCK}\n</disclaimer>"""
         if forbidden_text:
             return header + f"\n严禁在扩写中涉及以下维度：\n{forbidden_text}\n" + body
         return header + body
