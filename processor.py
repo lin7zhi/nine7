@@ -74,9 +74,9 @@ def parse_batch_response(text: str, expected_count: int) -> List[str]:
     result = []
     for i in range(expected_count):
         if i < len(prompts):
-            result.append(prompts[i].lstrip('*\u2022-\t ').strip())
+            result.append(prompts[i].lstrip('*•-\t ').strip())
         else:
-            result.append("Error: AI did not return a description for this image, or the output was truncated.")
+            result.append("Error: ⚠️ AI 未返回该图片的描述，或中途被截断。")
     return result
 
 
@@ -127,9 +127,9 @@ class BatchProcessor:
 
     def _build_prompt(self, count):
         if self.custom_prompt:
-            p = self.custom_prompt + f"\n\n This batch contains {count} images. Use [IMAGE X] format to separate outputs."
+            p = self.custom_prompt + f"\n\n【极度重要】本次共 {count} 张图片，必须用 [IMAGE X] 格式严格分隔输出！"
             if self.nsfw:
-                p += f"\nAfter completion, output marker: \"{END_MARKER}\""
+                p += f"\n【防截断判定】完成后在新的一行输出暗号：“{END_MARKER}”"
             return p
         return build_dynamic_prompt(self.enabled_dims, self.nsfw, count, self.portrait, self.portrait_suffix)
 
@@ -167,12 +167,13 @@ class BatchProcessor:
             raw, _ok = await self._infer_with_roll(compressed, prompt)
             prompts = parse_batch_response(raw, len(chunk))
         except Exception as e:
-            logger.warning(f"Chunk {chunk_idx+1} batch request failed: {e}")
+            logger.warning(f"第 {chunk_idx+1} 组整体请求失败: {e}")
             prompts = [f"Error: {e}"] * len(chunk)
 
+        # 单图降级
         failed_idx = [i for i, p in enumerate(prompts) if p.startswith("Error:")]
         if failed_idx and len(chunk) > 1:
-            logger.info(f"Chunk {chunk_idx+1}: {len(failed_idx)} failed, falling back to single-image retry")
+            logger.info(f"第 {chunk_idx+1} 组有 {len(failed_idx)} 张失败，降级为单图重跑")
             single_prompt = self._build_prompt(1)
             for i in failed_idx:
                 try:
@@ -218,7 +219,7 @@ class BatchProcessor:
             pending.append(img_path)
 
         if skipped and progress_callback:
-            progress_callback(0.0, f"Skipped {skipped} cached -- {len(pending)} remaining")
+            progress_callback(0.0, f"⏩ 跳过 {skipped} 张已完成，剩余 {len(pending)} 张待处理")
 
         chunk_size = self.images_per_request
         chunks = [pending[i:i + chunk_size] for i in range(0, len(pending), chunk_size)]
@@ -235,7 +236,7 @@ class BatchProcessor:
                 completed += 1
                 if progress_callback:
                     progress_callback(completed / total if total else 1.0,
-                                      f"Completed {completed}/{total} chunks (concurrency {self.max_concurrent})")
+                                      f"🚀 已完成 {completed}/{total} 组（并发 {self.max_concurrent}）")
             return chunk, res
 
         if chunks:
@@ -291,12 +292,12 @@ def process_batch_sync(input_paths, provider=None, api_key=None, base_url=None, 
                         final_image_paths.append(ep)
             final_image_paths.sort()
         except Exception as e:
-            return None, f"ZIP extraction failed: {e}", []
+            return None, f"❌ ZIP 解压失败: {e}", []
     else:
         final_image_paths = input_paths
 
     if not final_image_paths:
-        return None, "No valid images found", []
+        return None, "❌ 未找到有效图片", []
 
     client = get_ai_client(provider, api_key, base_url, model)
     processor = BatchProcessor(
@@ -323,9 +324,9 @@ def process_batch_sync(input_paths, provider=None, api_key=None, base_url=None, 
         if r.success and os.path.exists(saved_path):
             gallery_data.append((saved_path, f"[{idx}] {r.filename}"))
         if r.success:
-            status = "[cached]" if r.cached else "[ok]"
+            status = "⏩" if r.cached else "✅"
         else:
-            status = "[error]"
+            status = "❌"
         content = r.prompt if r.success else f"Error: {r.error}"
         summary_lines.append(f"{status} {r.filename}\n{'-'*40}\n{content}\n")
 
@@ -333,15 +334,17 @@ def process_batch_sync(input_paths, provider=None, api_key=None, base_url=None, 
     return zip_paths, summary, gallery_data
 
 
+# ==================== 标签扩写（含预填充破限）====================
 def expand_tags_sync(tags, provider=None, api_key=None, base_url=None, model=None,
                      nsfw=False, nsfw_max_rolls=3, enabled_dims=None, portrait=False, portrait_suffix=""):
     if not tags.strip():
-        return "Please enter tags or elements to expand"
+        return "❌ 请先输入需要扩写的标签或元素"
 
     client = get_ai_client(provider, api_key, base_url, model)
     effective_prompt = build_expansion_prompt(enabled_dims or DEFAULT_ENABLED_DIMS, nsfw, portrait, portrait_suffix)
     full_prompt = f"{effective_prompt}\n\n【用户输入的待扩写标签/元素】：\n{tags}"
 
+    # 预填充：强制模型从内容开头续写，绕过拒绝
     prefill = expansion_prefill(enabled_dims or DEFAULT_ENABLED_DIMS, nsfw, portrait, portrait_suffix)
 
     async def _run():
@@ -363,7 +366,7 @@ def expand_tags_sync(tags, provider=None, api_key=None, base_url=None, model=Non
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(2)
                     continue
-                return f"Expansion failed: {str(e)}"
+                return f"❌ 扩写失败: {str(e)}"
 
         junk = [r'已确认.*?\n', r'好的[，,].*?模式.*?\n', r'Understood.*?\n', r'\[IMAGE 1\]\n?']
         for pat in junk:

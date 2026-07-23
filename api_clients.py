@@ -26,10 +26,11 @@ def get_mime_type(image_path: str) -> str:
 
 
 def clean_response(text: str) -> str:
+    """清理破限残留：disclaimer 块、■ 符号等"""
     text = re.sub(r'<disclaimer>[\s\S]*?</disclaimer>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\[AI_SYSTEM detected[\s\S]*?I_AM_FREE\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\[According to.*?Charter.*?\]', '', text, flags=re.IGNORECASE)
-    text = text.replace("\u25a0", "").strip()
+    text = text.replace("■", "").strip()
     return text
 
 
@@ -73,6 +74,7 @@ class OpenAIClient(BaseClient):
         img_parts = _build_image_content_parts(image_paths, "openai") if has_images else []
 
         if nsfw:
+            # ========== 多层破限（借鉴小猫之神预设）==========
             messages = [
                 {
                     "role": "system",
@@ -113,6 +115,7 @@ class OpenAIClient(BaseClient):
                 }
             ]
 
+        # ---------- 预填充引导（破限核心）----------
         actual_prefill = ""
         if has_images:
             actual_prefill = "[IMAGE 1]\n"
@@ -157,6 +160,7 @@ class GeminiClient(BaseClient):
 
         contents = [{"role": "user", "parts": parts}]
 
+        # 纯文本 + 有 prefill 时，追加一个 model 轮引导续写
         has_images = len(image_paths) > 0
         if prefill and not has_images:
             contents.append({"role": "model", "parts": [{"text": prefill}]})
@@ -203,6 +207,7 @@ class ClaudeClient(BaseClient):
 
         messages = [{"role": "user", "content": content_list}]
 
+        # 预填充：Claude 原生支持 assistant 结尾续写
         actual_prefill = ""
         if has_images:
             actual_prefill = "[IMAGE 1]\n"
@@ -260,4 +265,4 @@ def get_ai_client(
     elif provider == "custom":
         return OpenAIClient(api_key=api_key or config.CUSTOM_API_KEY, base_url=base_url or config.CUSTOM_BASE_URL, model=model or config.CUSTOM_MODEL)
     else:
-        raise ValueError(f"Unsupported AI provider: {provider}")
+        raise ValueError(f"不支持的 AI 提供商: {provider}")
